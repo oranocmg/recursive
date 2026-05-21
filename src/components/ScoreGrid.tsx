@@ -56,8 +56,14 @@ const Playhead = ({ startStep }: { startStep: number }) => {
 const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, isReadOnly }) => {
   const { previousResponse, currentResponse, toggleNote, playheadStep, isPlaying, auditionEnabled } = useScoreStore();
 
-  const handleCellClick = (step: number, pitch: string) => {
+  const handleCellClick = (e: React.MouseEvent, baseStep: number, pitch: string, exactStep?: number) => {
     if (!isReadOnly) {
+      let step = exactStep ?? baseStep;
+      if (!exactStep && e.shiftKey) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        step = baseStep + (offsetX / STEP_WIDTH);
+      }
       const wasAdded = toggleNote(step, pitch);
       if (wasAdded && auditionEnabled) {
         playAuditionNote(pitch, useScoreStore.getState().noteLength);
@@ -166,7 +172,7 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
                   key={stepIndex}
                   className={`absolute top-0 bottom-0 hover:bg-zinc-600/40 transition-colors duration-75 box-border ${isReadOnly ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                   style={{ left: stepIndex * STEP_WIDTH, width: STEP_WIDTH, zIndex: 15 }}
-                  onClick={() => handleCellClick(startStep + stepIndex, pitch)}
+                  onClick={(e) => handleCellClick(e, startStep + stepIndex, pitch)}
                 />
               ))}
             </div>
@@ -185,13 +191,42 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
               return (
                 <div
                   key={`${n.step}-${n.pitch}`}
-                  onClick={(e) => {
-                    if (!isReadOnly) {
-                      e.stopPropagation();
-                      handleCellClick(n.step, pitch);
-                    }
+                  onPointerDown={(e) => {
+                    if (isReadOnly) return;
+                    e.stopPropagation();
+                    const startX = e.clientX;
+                    const initialStep = n.step;
+                    let currentStep = n.step;
+                    let hasMoved = false;
+
+                    const handlePointerMove = (moveEvent: PointerEvent) => {
+                      const deltaX = moveEvent.clientX - startX;
+                      if (Math.abs(deltaX) > 3) hasMoved = true;
+                      
+                      if (hasMoved) {
+                        const exactDeltaSteps = deltaX / STEP_WIDTH;
+                        const deltaSteps = moveEvent.shiftKey ? exactDeltaSteps : Math.round(exactDeltaSteps);
+                        const newStep = Math.max(startStep, Math.min(startStep + TOTAL_STEPS - n.durationSteps, initialStep + deltaSteps));
+                        
+                        if (newStep !== currentStep) {
+                          useScoreStore.getState().updateNoteStep(currentStep, pitch, newStep);
+                          currentStep = newStep;
+                        }
+                      }
+                    };
+
+                    const handlePointerUp = () => {
+                      window.removeEventListener('pointermove', handlePointerMove);
+                      window.removeEventListener('pointerup', handlePointerUp);
+                      if (!hasMoved) {
+                        handleCellClick(e as any, initialStep, pitch, initialStep);
+                      }
+                    };
+
+                    window.addEventListener('pointermove', handlePointerMove);
+                    window.addEventListener('pointerup', handlePointerUp);
                   }}
-                  className={`absolute rounded-sm box-border flex items-center justify-center transition-colors duration-100 z-20 
+                  className={`absolute rounded-sm box-border flex items-center justify-center transition-colors duration-100 z-20 group
                     ${isReadOnly ? 'pointer-events-none' : 'cursor-pointer pointer-events-auto'}
                     ${isPlayingNote 
                       ? (isReadOnly ? 'bg-zinc-300 border-zinc-200' : 'bg-white border-white shadow-[0_0_8px_rgba(255,255,255,0.6)]') 
@@ -203,7 +238,35 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
                     width: n.durationSteps * STEP_WIDTH - 1, 
                     height: ROW_HEIGHT - 4 
                   }}
-                />
+                >
+                  {!isReadOnly && (
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-30 opacity-0 group-hover:opacity-100 hover:bg-black/10 transition-opacity"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        const startX = e.clientX;
+                        const startDuration = n.durationSteps;
+                        const currentStep = n.step;
+                        
+                        const handlePointerMove = (moveEvent: PointerEvent) => {
+                          const deltaX = moveEvent.clientX - startX;
+                          const exactDeltaSteps = deltaX / STEP_WIDTH;
+                          const deltaSteps = moveEvent.shiftKey ? exactDeltaSteps : Math.round(exactDeltaSteps);
+                          const newDuration = Math.max(0.1, startDuration + deltaSteps);
+                          useScoreStore.getState().updateNoteDuration(currentStep, pitch, newDuration);
+                        };
+                        
+                        const handlePointerUp = () => {
+                          window.removeEventListener('pointermove', handlePointerMove);
+                          window.removeEventListener('pointerup', handlePointerUp);
+                        };
+                        
+                        window.addEventListener('pointermove', handlePointerMove);
+                        window.addEventListener('pointerup', handlePointerUp);
+                      }}
+                    />
+                  )}
+                </div>
               );
             });
           })}

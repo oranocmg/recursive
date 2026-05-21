@@ -52,10 +52,12 @@ interface ScoreState {
   setMetronomeEnabled: (enabled: boolean) => void;
   setAuditionEnabled: (enabled: boolean) => void;
   setAutoScrollEnabled: (enabled: boolean) => void;
+  updateNoteDuration: (step: number, pitch: string, newDuration: number) => void;
+  updateNoteStep: (oldStep: number, pitch: string, newStep: number) => void;
 }
 
 const normalizeNote = (n: any, isResponse: boolean): Note => {
-  let step = Math.floor(Number(n.step) || 0);
+  let step = Number(n.step) || 0;
   const minStep = isResponse ? 64 : 0;
   const maxStep = isResponse ? 127 : 63;
   if (step < minStep) step = minStep;
@@ -103,6 +105,31 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     });
     
     return wasAdded;
+  },
+
+  updateNoteDuration: (step: number, pitch: string, newDuration: number) => {
+    set((state) => {
+      const target = state.currentResponse.find(n => n.step === step && n.pitch === pitch);
+      if (target && target.durationSteps === Math.max(0.1, newDuration)) return state;
+      return {
+        currentResponse: state.currentResponse.map(n => 
+          (n.step === step && n.pitch === pitch) ? { ...n, durationSteps: Math.max(0.1, newDuration) } : n
+        )
+      };
+    });
+  },
+
+  updateNoteStep: (oldStep: number, pitch: string, newStep: number) => {
+    set((state) => {
+      if (oldStep === newStep) return state;
+      const target = state.currentResponse.find(n => n.step === oldStep && n.pitch === pitch);
+      if (!target) return state;
+      return {
+        currentResponse: state.currentResponse.map(n => 
+          (n.step === oldStep && n.pitch === pitch) ? { ...n, step: newStep } : n
+        )
+      };
+    });
   },
   
   clearResponse: () => set({ currentResponse: [] }),
