@@ -10,7 +10,6 @@ export const Controls: React.FC = () => {
     playheadStep,
     clearResponse, 
     submitResponse, 
-    resetLoop,
     noteLength,
     setNoteLength,
     playbackMode,
@@ -130,15 +129,6 @@ export const Controls: React.FC = () => {
           className="px-6 py-2 text-sm bg-zinc-100 text-zinc-900 hover:bg-white transition-colors rounded font-medium"
         >
           Submit
-        </button>
-
-        <div className="w-full h-px bg-zinc-800 my-2 md:hidden" />
-        
-        <button 
-          onClick={resetLoop}
-          className="px-4 py-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors md:ml-4"
-        >
-          Reset Loop
         </button>
       </div>
     </div>
