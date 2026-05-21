@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import type { Note, HistoryEntry } from '../types/music';
+import { supabase } from '../lib/supabase';
+
+let isSubscribed = false;
 
 // A simple C Dorian phrase for the starter
 const defaultStarterPhrase: Note[] = [
@@ -39,9 +42,9 @@ interface ScoreState {
   // Actions
   toggleNote: (step: number, pitch: string) => boolean;
   clearResponse: () => void;
-  submitResponse: () => void;
+  submitResponse: () => Promise<void>;
   resetLoop: () => void;
-  loadState: () => void;
+  loadState: () => Promise<void>;
   setIsPlaying: (playing: boolean) => void;
   setPlayheadStep: (step: number) => void;
   setNoteLength: (length: number) => void;
@@ -104,7 +107,7 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   
   clearResponse: () => set({ currentResponse: [] }),
   
-  submitResponse: () => {
+  submitResponse: async () => {
     const { currentResponse, conversationHistory } = get();
     
     const newPreviousResponse = currentResponse.map(n => ({
@@ -112,22 +115,39 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       step: n.step - 64
     }));
 
-    const newHistoryEntry: HistoryEntry = {
-      id: crypto.randomUUID(),
-      notes: newPreviousResponse,
-      timestamp: Date.now()
-    };
-    
-    const newHistory = [...conversationHistory, newHistoryEntry];
-    
-    localStorage.setItem('recursive-score-latest', JSON.stringify(newPreviousResponse));
-    localStorage.setItem('recursive-score-history', JSON.stringify(newHistory));
-    
-    set({
-      previousResponse: newPreviousResponse,
-      currentResponse: [],
-      conversationHistory: newHistory,
-    });
+    try {
+      const { error } = await supabase
+        .from('submissions')
+        .insert({ notes: newPreviousResponse });
+        
+      if (error) throw error;
+      
+      // State will be updated by the realtime subscription,
+      // but we can manually clear the current response right away
+      set({
+        currentResponse: [],
+      });
+      // Optionally refetch explicitly just in case realtime is slow
+      await get().loadState();
+    } catch (e) {
+      console.error("Supabase insert failed, falling back to localStorage", e);
+      const newHistoryEntry: HistoryEntry = {
+        id: crypto.randomUUID(),
+        notes: newPreviousResponse,
+        timestamp: Date.now()
+      };
+      
+      const newHistory = [...conversationHistory, newHistoryEntry];
+      
+      localStorage.setItem('recursive-score-latest', JSON.stringify(newPreviousResponse));
+      localStorage.setItem('recursive-score-history', JSON.stringify(newHistory));
+      
+      set({
+        previousResponse: newPreviousResponse,
+        currentResponse: [],
+        conversationHistory: newHistory,
+      });
+    }
   },
 
   resetLoop: () => {
@@ -140,8 +160,46 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     });
   },
   
-  loadState: () => {
+  loadState: async () => {
+    if (!isSubscribed) {
+      isSubscribed = true;
+      supabase
+        .channel('public:submissions')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'submissions' }, () => {
+          get().loadState();
+        })
+        .subscribe();
+    }
+
     try {
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const newHistory: HistoryEntry[] = data.map((row: any) => ({
+          id: row.id,
+          notes: Array.isArray(row.notes) ? row.notes.map((n: any) => normalizeNote(n, false)) : [],
+          timestamp: new Date(row.created_at).getTime()
+        }));
+        
+        const latestEntry = newHistory[newHistory.length - 1];
+        set({
+          previousResponse: latestEntry.notes,
+          conversationHistory: newHistory
+        });
+      } else {
+        set({
+          previousResponse: defaultStarterPhrase,
+          conversationHistory: []
+        });
+      }
+    } catch (e) {
+      console.error("Failed to load recursive score state from Supabase", e);
+      // Fallback to localStorage
       const latestData = localStorage.getItem('recursive-score-latest');
       const historyData = localStorage.getItem('recursive-score-history');
       
@@ -168,8 +226,6 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
         previousResponse: newPreviousResponse,
         conversationHistory: newHistory
       });
-    } catch (e) {
-      console.error("Failed to load recursive score state", e);
     }
   },
 
