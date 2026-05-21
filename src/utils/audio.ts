@@ -2,34 +2,68 @@ import * as Tone from 'tone';
 import type { Note } from '../types/music';
 import { useScoreStore } from '../store/useScoreStore';
 
-const synth = new Tone.PolySynth(Tone.Synth, {
-  oscillator: { type: 'triangle' },
-  envelope: { attack: 0.02, decay: 0.1, sustain: 0.1, release: 0.1 }
-}).toDestination();
-synth.volume.value = -6;
+let synth: Tone.PolySynth | null = null;
+let metronomeSynth: Tone.Synth | null = null;
 
-const metronomeSynth = new Tone.Synth({
-  oscillator: { type: 'square' },
-  envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 }
-}).toDestination();
-metronomeSynth.volume.value = -12;
+const createSynths = () => {
+  if (synth) synth.dispose();
+  if (metronomeSynth) metronomeSynth.dispose();
+
+  synth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.02, decay: 0.1, sustain: 0.1, release: 0.1 }
+  }).toDestination();
+  synth.volume.value = -6;
+
+  metronomeSynth = new Tone.Synth({
+    oscillator: { type: 'square' },
+    envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 }
+  }).toDestination();
+  metronomeSynth.volume.value = -12;
+};
 
 let isAudioInitialized = false;
-let currentPart: Tone.Part | null = null;
-let playheadEventId: number | null = null;
-let metronomeEventId: number | null = null;
+const STEP_DURATION = 0.25; // 120 BPM -> quarter = 0.5s -> 8th step = 0.25s
+
+let playbackStartTime = 0;
+let animationFrameId: number | null = null;
+let isCurrentlyPlaying = false;
+let currentEndStep = 0;
+let startOffsetStep = 0;
+
+export const getExactPlayheadStep = () => {
+  if (!isCurrentlyPlaying) return 0;
+  const elapsed = (performance.now() - playbackStartTime) / 1000;
+  return startOffsetStep + (elapsed / STEP_DURATION);
+};
 
 export const initAudio = async () => {
   if (!isAudioInitialized) {
     await Tone.start();
-    Tone.Transport.bpm.value = 120;
+    createSynths();
     isAudioInitialized = true;
   }
 };
 
+const playheadLoop = () => {
+  if (!isCurrentlyPlaying) return;
+
+  const elapsed = (performance.now() - playbackStartTime) / 1000;
+  const currentStep = startOffsetStep + Math.floor(elapsed / STEP_DURATION);
+
+  if (currentStep >= currentEndStep) {
+    stopAudio();
+    return;
+  }
+
+  useScoreStore.getState().setPlayheadStep(currentStep);
+  
+  animationFrameId = requestAnimationFrame(playheadLoop);
+};
+
 export const playScore = async (previousResponse: Note[], currentResponse: Note[]) => {
   await initAudio();
-  stopAudio();
+  stopAudio(); // completely clears old synths and stops loop
 
   const state = useScoreStore.getState();
   const mode = state.playbackMode;
@@ -48,69 +82,53 @@ export const playScore = async (previousResponse: Note[], currentResponse: Note[
     notesToPlay = [...previousResponse, ...currentResponse];
   }
 
-  const events = notesToPlay.map(note => {
-    const durBeats = note.duration * 0.5;
-    return {
-      time: `0:0:${note.step * 2}`,
-      pitch: note.pitch,
-      duration: `${durBeats} * 4n`,
-    };
+  startOffsetStep = startStep;
+  currentEndStep = endStep;
+  
+  const now = Tone.now();
+  
+  notesToPlay.forEach(n => {
+    // Safety check
+    const durationSteps = n.durationSteps && n.durationSteps > 0 ? n.durationSteps : 1;
+    const relativeStep = n.step - startStep;
+    const startTime = now + relativeStep * STEP_DURATION;
+    const duration = durationSteps * STEP_DURATION;
+    
+    synth?.triggerAttackRelease(n.pitch, duration, startTime);
   });
 
-  currentPart = new Tone.Part((time, value) => {
-    synth.triggerAttackRelease(value.pitch, value.duration, time);
-  }, events).start(0);
-
-  metronomeEventId = Tone.Transport.scheduleRepeat((time) => {
-    if (!useScoreStore.getState().metronomeEnabled) return;
-    const ticksPerBeat = Tone.Transport.PPQ;
-    const beat = Math.floor(Tone.Transport.ticks / ticksPerBeat) % 4;
-    if (beat === 0) {
-      metronomeSynth.triggerAttackRelease("C6", "32n", time, 1);
-    } else {
-      metronomeSynth.triggerAttackRelease("C5", "32n", time, 0.5);
-    }
-  }, "4n");
-
-  playheadEventId = Tone.Transport.scheduleRepeat((time) => {
-    Tone.Draw.schedule(() => {
-      const ticksPerStep = Tone.Transport.PPQ / 2;
-      const step = Math.floor(Tone.Transport.ticks / ticksPerStep);
-      
-      const setPlayhead = useScoreStore.getState().setPlayheadStep;
-      setPlayhead(step);
-      
-      if (step >= endStep) {
-        stopAudio();
+  if (state.metronomeEnabled) {
+    const totalStepsToPlay = endStep - startStep;
+    for (let s = 0; s < totalStepsToPlay; s++) {
+      const isQuarter = s % 2 === 0;
+      const isBarStart = s % 8 === 0;
+      if (isQuarter) {
+        const time = now + s * STEP_DURATION;
+        const pitch = isBarStart ? "C6" : "C5";
+        const vel = isBarStart ? 1 : 0.5;
+        metronomeSynth?.triggerAttackRelease(pitch, 0.05, time, vel);
       }
-    }, time);
-  }, '32n');
-
-  if (startStep > 0) {
-    Tone.Transport.position = `0:0:${startStep * 2}`;
-  } else {
-    Tone.Transport.position = 0;
+    }
   }
 
-  Tone.Transport.start();
-  useScoreStore.getState().setIsPlaying(true);
+  playbackStartTime = performance.now();
+  isCurrentlyPlaying = true;
+  state.setIsPlaying(true);
+  
+  animationFrameId = requestAnimationFrame(playheadLoop);
 };
 
 export const stopAudio = () => {
-  if (currentPart) {
-    currentPart.dispose();
-    currentPart = null;
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
   }
-  if (playheadEventId !== null) {
-    Tone.Transport.clear(playheadEventId);
-    playheadEventId = null;
-  }
-  if (metronomeEventId !== null) {
-    Tone.Transport.clear(metronomeEventId);
-    metronomeEventId = null;
-  }
-  Tone.Transport.stop();
-  Tone.Transport.position = 0;
+  
+  // Dispose and recreate synths to wipe out any future scheduled events
+  createSynths();
+  Tone.Transport.cancel();
+  
+  isCurrentlyPlaying = false;
   useScoreStore.getState().setPlayheadStep(0);
   useScoreStore.getState().setIsPlaying(false);
 };
@@ -119,31 +137,28 @@ export const playHistoryItem = async (notes: Note[]) => {
   await initAudio();
   stopAudio();
 
-  const events = notes.map(note => {
-    const durBeats = note.duration * 0.5;
-    return {
-      time: `0:0:${note.step * 2}`,
-      pitch: note.pitch,
-      duration: `${durBeats} * 4n`,
-    };
+  startOffsetStep = 0;
+  currentEndStep = 64; 
+  
+  const now = Tone.now();
+  
+  notes.forEach(n => {
+    const durationSteps = n.durationSteps && n.durationSteps > 0 ? n.durationSteps : 1;
+    const startTime = now + n.step * STEP_DURATION;
+    const duration = durationSteps * STEP_DURATION;
+    synth?.triggerAttackRelease(n.pitch, duration, startTime);
   });
 
-  currentPart = new Tone.Part((time, value) => {
-    synth.triggerAttackRelease(value.pitch, value.duration, time);
-  }, events).start(0);
-
-  Tone.Transport.scheduleOnce((time) => {
-    Tone.Transport.stop(time);
-    useScoreStore.getState().setIsPlaying(false);
-  }, "+8m");
-
-  Tone.Transport.position = 0;
-  Tone.Transport.start();
+  playbackStartTime = performance.now();
+  isCurrentlyPlaying = true;
   useScoreStore.getState().setIsPlaying(true);
+  
+  animationFrameId = requestAnimationFrame(playheadLoop);
 };
 
 export const playAuditionNote = async (pitch: string, durationInSteps: number) => {
   await initAudio();
-  const durBeats = durationInSteps * 0.5;
-  synth.triggerAttackRelease(pitch, `${durBeats} * 4n`);
+  const durationSteps = durationInSteps > 0 ? durationInSteps : 1;
+  const duration = durationSteps * STEP_DURATION;
+  synth?.triggerAttackRelease(pitch, duration);
 };

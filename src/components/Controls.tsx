@@ -18,7 +18,9 @@ export const Controls: React.FC = () => {
     metronomeEnabled,
     setMetronomeEnabled,
     auditionEnabled,
-    setAuditionEnabled
+    setAuditionEnabled,
+    autoScrollEnabled,
+    setAutoScrollEnabled
   } = useScoreStore();
 
   const handlePlay = (mode: 'previous' | 'response' | 'full') => {
@@ -89,6 +91,13 @@ export const Controls: React.FC = () => {
           className={`px-3 py-1.5 text-sm transition-colors rounded ${auditionEnabled ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
         >
           🔊 Audition
+        </button>
+        
+        <button
+          onClick={() => setAutoScrollEnabled(!autoScrollEnabled)}
+          className={`px-3 py-1.5 text-sm transition-colors rounded ${autoScrollEnabled ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+        >
+          Auto-Scroll {autoScrollEnabled ? 'On' : 'Off'}
         </button>
       </div>
 

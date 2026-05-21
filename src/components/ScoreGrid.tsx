@@ -1,7 +1,7 @@
 import React from 'react';
 import { useScoreStore } from '../store/useScoreStore';
 import { DIATONIC_PITCHES } from '../types/music';
-import { playAuditionNote } from '../utils/audio';
+import { playAuditionNote, getExactPlayheadStep } from '../utils/audio';
 
 interface GridSectionProps {
   title: string;
@@ -10,17 +10,51 @@ interface GridSectionProps {
   isReadOnly: boolean;
 }
 
-const ROW_HEIGHT_CLASS = "h-6"; 
+const BARS = 8;
 const STEPS_PER_BAR = 8;
-const BARS_PER_GRID = 8;
-const TOTAL_STEPS = STEPS_PER_BAR * BARS_PER_GRID; 
-const LABEL_WIDTH_CLASS = "w-12"; 
+const TOTAL_STEPS = 64;
+const STEP_WIDTH = 24;
+const ROW_HEIGHT = 28;
+const KEY_WIDTH = 64;
+const GRID_WIDTH = TOTAL_STEPS * STEP_WIDTH;
+const GRID_HEIGHT = DIATONIC_PITCHES.length * ROW_HEIGHT;
+
+const Playhead = ({ startStep }: { startStep: number }) => {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const isPlaying = useScoreStore(s => s.isPlaying);
+
+  React.useEffect(() => {
+    if (!isPlaying) return;
+    let frameId: number;
+    const loop = () => {
+      if (ref.current) {
+        const exact = getExactPlayheadStep();
+        const relative = exact - startStep;
+        if (relative >= 0 && relative <= TOTAL_STEPS) {
+          ref.current.style.transform = `translateX(${relative * STEP_WIDTH}px)`;
+          ref.current.style.display = 'block';
+        } else {
+          ref.current.style.display = 'none';
+        }
+      }
+      frameId = requestAnimationFrame(loop);
+    };
+    frameId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frameId);
+  }, [isPlaying, startStep]);
+
+  if (!isPlaying) return null;
+  return (
+    <div 
+      ref={ref}
+      className="absolute top-0 bottom-0 w-px bg-zinc-100 shadow-[0_0_8px_rgba(255,255,255,0.8)] z-30 pointer-events-none"
+      style={{ left: 0, willChange: 'transform', display: 'none' }}
+    />
+  );
+};
 
 const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, isReadOnly }) => {
   const { previousResponse, currentResponse, toggleNote, playheadStep, isPlaying, auditionEnabled } = useScoreStore();
-  
-  const showPlayhead = isPlaying && playheadStep >= startStep && playheadStep < startStep + TOTAL_STEPS;
-  const relativePlayheadStep = playheadStep - startStep;
 
   const handleCellClick = (step: number, pitch: string) => {
     if (!isReadOnly) {
@@ -31,138 +65,150 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
     }
   };
 
-  const getPitchColor = (pitch: string) => {
+  const getPitchBgColor = (pitch: string) => {
     const isBlackKey = pitch.includes('b') || pitch.includes('#');
-    if (isBlackKey) {
-      return "bg-zinc-800 text-zinc-400";
-    }
-    return "bg-zinc-900 text-zinc-300";
+    return isBlackKey ? "bg-zinc-800" : "bg-zinc-900";
+  };
+
+  const getPitchTextColor = (pitch: string) => {
+    const isBlackKey = pitch.includes('b') || pitch.includes('#');
+    return isBlackKey ? "text-zinc-400" : "text-zinc-300";
   };
 
   return (
-    <div className="mb-6 last:mb-0">
+    <div className="mb-6 last:mb-0 w-max inline-block">
       <div className="text-sm text-zinc-400 mb-2 font-medium">{title}</div>
-      <div className="w-full bg-zinc-900 border border-zinc-700 rounded overflow-hidden">
+      <div 
+        className="bg-zinc-900 border border-zinc-700 rounded shadow-lg overflow-y-auto overflow-x-hidden relative box-border custom-scrollbar"
+        style={{ 
+          display: 'grid',
+          gridTemplateColumns: `${KEY_WIDTH}px ${GRID_WIDTH}px`,
+          gridTemplateRows: `${ROW_HEIGHT}px ${GRID_HEIGHT}px`,
+          maxHeight: '700px'
+        }}
+      >
+        {/* Top Left Spacer */}
+        <div className="bg-zinc-800 border-r border-b border-zinc-600 box-border sticky top-0 z-50" />
         
-        {/* Header Row */}
-        <div className={`flex border-b border-zinc-600 ${ROW_HEIGHT_CLASS}`}>
-          <div className={`${LABEL_WIDTH_CLASS} flex-none border-r border-zinc-600 bg-zinc-800`}></div>
-          <div className="flex-1 grid grid-cols-8">
-            {Array.from({ length: BARS_PER_GRID }).map((_, i) => (
-              <div 
-                key={i} 
-                className={`border-r border-zinc-600 px-1 text-[10px] text-zinc-400 flex items-center ${i % 2 === 1 ? 'bg-black/20' : 'bg-zinc-800/80'}`}
-              >
-                Bar {startBar + i}
-              </div>
-            ))}
-          </div>
+        {/* Bar Header Area */}
+        <div className="relative border-b border-zinc-600 box-border overflow-hidden bg-zinc-900 sticky top-0 z-40">
+          {Array.from({ length: BARS }).map((_, i) => (
+            <div 
+              key={i} 
+              className="absolute top-0 bottom-0 border-r border-zinc-600 px-1 text-[10px] text-zinc-400 flex items-center box-border"
+              style={{ 
+                left: i * STEPS_PER_BAR * STEP_WIDTH, 
+                width: STEPS_PER_BAR * STEP_WIDTH,
+                backgroundColor: i % 2 === 1 ? 'rgba(0,0,0,0.2)' : 'rgba(39,39,42,0.8)'
+              }}
+            >
+              Bar {startBar + i}
+            </div>
+          ))}
         </div>
 
-        {/* Grid Area */}
-        <div className="relative">
-          
-          {/* Bar Backgrounds Overlay (For alternating bar shading and strong bar lines) */}
-          <div className={`absolute top-0 bottom-0 right-0 grid grid-cols-8 pointer-events-none z-0`} style={{ left: '3rem' /* 48px to match w-12 */ }}>
-            {Array.from({ length: BARS_PER_GRID }).map((_, i) => (
-              <div 
-                key={i} 
-                className={`border-r border-zinc-600/60 ${i % 2 === 1 ? 'bg-black/20' : 'bg-transparent'}`} 
-              />
-            ))}
-          </div>
-
-          {/* Pitch Rows */}
+        {/* Pitch Keys Column */}
+        <div className="flex flex-col border-r border-zinc-600 box-border relative z-20">
           {DIATONIC_PITCHES.map((pitch) => (
-            <div key={pitch} className={`flex border-b border-zinc-800/40 ${ROW_HEIGHT_CLASS} relative z-10`}>
-              
-              {/* Left Label */}
-              <div 
-                className={`${LABEL_WIDTH_CLASS} flex-none flex items-center justify-end px-2 text-[10px] font-mono border-r border-zinc-600 ${getPitchColor(pitch)}`}
-              >
-                {pitch}
-              </div>
+            <div 
+              key={pitch} 
+              className={`flex-none flex items-center justify-end px-2 text-[10px] font-mono border-b border-zinc-800/40 box-border ${getPitchBgColor(pitch)} ${getPitchTextColor(pitch)}`}
+              style={{ height: ROW_HEIGHT }}
+            >
+              {pitch}
+            </div>
+          ))}
+        </div>
 
-              {/* Cells Wrapper */}
-              <div className="flex-1 relative">
-                
-                {/* Interactive Cells grid */}
-                <div className="absolute inset-0 grid grid-cols-[repeat(64,1fr)]">
-                  {Array.from({ length: TOTAL_STEPS }).map((_, i) => {
-                    const step = startStep + i;
-                    const isQuarterStart = i % 2 === 0;
-                    const isBarStart = i % 8 === 0;
-                    
-                    return (
-                      <div
-                        key={step}
-                        onClick={() => handleCellClick(step, pitch)}
-                        className={`
-                          border-r border-zinc-800/10
-                          ${isQuarterStart && !isBarStart ? 'border-r-zinc-700/40' : ''}
-                          ${isReadOnly ? 'cursor-not-allowed' : 'hover:bg-zinc-600/40 cursor-pointer'}
-                          transition-colors duration-75
-                        `}
-                      />
-                    );
-                  })}
-                </div>
-                
-                {/* Notes rendered absolutely with percentages */}
-                <div className="absolute inset-0 pointer-events-none">
-                  {isReadOnly ? 
-                    previousResponse.filter(n => n.pitch === pitch).map(n => {
-                      const isPlayingNote = isPlaying && playheadStep >= n.step && playheadStep < n.step + n.duration;
-                      const leftPercent = ((n.step - startStep) / TOTAL_STEPS) * 100;
-                      const widthPercent = (n.duration / TOTAL_STEPS) * 100;
-                      return (
-                        <div
-                          key={`${n.step}-${n.pitch}`}
-                          className={`absolute top-[2px] bottom-[2px] rounded-sm z-20 transition-all duration-100 ${isPlayingNote ? 'bg-zinc-300 border border-zinc-200 scale-105 shadow-[0_0_8px_rgba(255,255,255,0.2)]' : 'bg-zinc-600 border border-zinc-500'}`}
-                          style={{ 
-                            left: `${leftPercent}%`, 
-                            width: `calc(${widthPercent}% - 1px)` 
-                          }}
-                        />
-                      );
-                    })
-                    :
-                    currentResponse.filter(n => n.pitch === pitch).map(n => {
-                      const relativeStep = n.step - startStep;
-                      const isPlayingNote = isPlaying && playheadStep >= n.step && playheadStep < n.step + n.duration;
-                      const leftPercent = (relativeStep / TOTAL_STEPS) * 100;
-                      const widthPercent = (n.duration / TOTAL_STEPS) * 100;
-                      return (
-                        <div
-                          key={`${n.step}-${n.pitch}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCellClick(n.step, pitch); // toggles off
-                          }}
-                          className={`absolute top-[2px] bottom-[2px] rounded-sm cursor-pointer pointer-events-auto z-20 transition-all duration-100 ${isPlayingNote ? 'bg-white border border-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.6)]' : 'bg-zinc-200 border border-zinc-300 hover:bg-zinc-300'}`}
-                          style={{ 
-                            left: `${leftPercent}%`, 
-                            width: `calc(${widthPercent}% - 1px)` 
-                          }}
-                        />
-                      );
-                    })
-                  }
-                </div>
-              </div>
+        {/* Grid Body */}
+        <div className="relative box-border cursor-crosshair overflow-hidden" style={{ width: GRID_WIDTH, height: GRID_HEIGHT }}>
+          {/* Background Step/Bar Lines */}
+          {Array.from({ length: TOTAL_STEPS + 1 }).map((_, stepIndex) => {
+            const isBarStart = stepIndex % 8 === 0;
+            const isBeatStart = stepIndex % 2 === 0;
+
+            let borderColor = 'border-zinc-800/20'; // subtle step line
+            let zIndex = 5;
+            if (isBarStart) {
+              borderColor = 'border-zinc-600'; // strong bar line
+              zIndex = 10;
+            } else if (isBeatStart) {
+              borderColor = 'border-zinc-700/60'; // beat line
+              zIndex = 8;
+            }
+
+            const isLast = stepIndex === TOTAL_STEPS;
+            const bgColor = (!isLast && Math.floor(stepIndex / 8) % 2 === 1) ? 'rgba(0,0,0,0.1)' : 'transparent';
+
+            return (
+              <div 
+                key={stepIndex}
+                className={`absolute top-0 bottom-0 border-l pointer-events-none box-border ${borderColor}`}
+                style={{ 
+                  left: stepIndex * STEP_WIDTH, 
+                  width: isLast ? 0 : STEP_WIDTH,
+                  backgroundColor: bgColor,
+                  zIndex
+                }}
+              />
+            );
+          })}
+
+          {/* Pitch Rows for backgrounds & click handlers */}
+          {DIATONIC_PITCHES.map((pitch, pitchIndex) => (
+            <div 
+              key={pitch}
+              className={`absolute left-0 right-0 border-b border-zinc-800/40 box-border ${getPitchBgColor(pitch)}`}
+              style={{ top: pitchIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
+            >
+              {Array.from({ length: TOTAL_STEPS }).map((_, stepIndex) => (
+                <div
+                  key={stepIndex}
+                  className={`absolute top-0 bottom-0 hover:bg-zinc-600/40 transition-colors duration-75 box-border ${isReadOnly ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  style={{ left: stepIndex * STEP_WIDTH, width: STEP_WIDTH, zIndex: 15 }}
+                  onClick={() => handleCellClick(startStep + stepIndex, pitch)}
+                />
+              ))}
             </div>
           ))}
 
-          {/* Playhead */}
-          {showPlayhead && (
-            <div className={`absolute top-0 bottom-0 right-0 pointer-events-none z-30`} style={{ left: '3rem' }}>
-              <div 
-                className="absolute top-0 bottom-0 w-px bg-zinc-100 shadow-[0_0_8px_rgba(255,255,255,0.8)] transition-transform duration-75 ease-linear"
-                style={{ left: `${(relativePlayheadStep / TOTAL_STEPS) * 100}%` }}
-              />
-            </div>
-          )}
+          {/* Notes */}
+          {DIATONIC_PITCHES.map((pitch, pitchIndex) => {
+            const notes = isReadOnly 
+              ? previousResponse.filter(n => n.pitch === pitch) 
+              : currentResponse.filter(n => n.pitch === pitch);
 
+            return notes.map(n => {
+              const relativeStep = n.step - startStep;
+              const isPlayingNote = isPlaying && playheadStep >= n.step && playheadStep < n.step + n.durationSteps;
+              
+              return (
+                <div
+                  key={`${n.step}-${n.pitch}`}
+                  onClick={(e) => {
+                    if (!isReadOnly) {
+                      e.stopPropagation();
+                      handleCellClick(n.step, pitch);
+                    }
+                  }}
+                  className={`absolute rounded-sm box-border flex items-center justify-center transition-colors duration-100 z-20 
+                    ${isReadOnly ? 'pointer-events-none' : 'cursor-pointer pointer-events-auto'}
+                    ${isPlayingNote 
+                      ? (isReadOnly ? 'bg-zinc-300 border-zinc-200' : 'bg-white border-white shadow-[0_0_8px_rgba(255,255,255,0.6)]') 
+                      : (isReadOnly ? 'bg-zinc-600 border-zinc-500' : 'bg-zinc-200 border-zinc-300 hover:bg-zinc-300')
+                    } border`}
+                  style={{ 
+                    left: relativeStep * STEP_WIDTH, 
+                    top: pitchIndex * ROW_HEIGHT + 2, 
+                    width: n.durationSteps * STEP_WIDTH - 1, 
+                    height: ROW_HEIGHT - 4 
+                  }}
+                />
+              );
+            });
+          })}
+
+          <Playhead startStep={startStep} />
         </div>
       </div>
     </div>
@@ -170,8 +216,58 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
 };
 
 export const ScoreGrid: React.FC = () => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const isPlaying = useScoreStore(s => s.isPlaying);
+  const autoScrollEnabled = useScoreStore(s => s.autoScrollEnabled);
+  const setAutoScrollEnabled = useScoreStore(s => s.setAutoScrollEnabled);
+
+  // Disable auto-scroll on manual user interaction
+  const handleUserScroll = () => {
+    if (autoScrollEnabled) {
+      setAutoScrollEnabled(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!isPlaying || !autoScrollEnabled) return;
+    
+    let frameId: number;
+    const loop = () => {
+      if (containerRef.current && autoScrollEnabled) {
+        const exact = getExactPlayheadStep();
+        if (exact > 0) {
+          const relativeStep = exact >= 64 ? exact - 64 : exact;
+          const playheadX = KEY_WIDTH + relativeStep * STEP_WIDTH;
+          
+          const container = containerRef.current;
+          const clientWidth = container.clientWidth;
+          
+          // Center the playhead
+          const targetScroll = playheadX - (clientWidth / 2);
+          
+          if (targetScroll > 0) {
+            container.scrollLeft = targetScroll;
+          } else {
+            container.scrollLeft = 0;
+          }
+        }
+      }
+      frameId = requestAnimationFrame(loop);
+    };
+    
+    frameId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frameId);
+  }, [isPlaying, autoScrollEnabled]);
+
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto">
+    <div 
+      ref={containerRef}
+      onWheel={handleUserScroll}
+      onTouchMove={handleUserScroll}
+      onPointerDown={handleUserScroll}
+      className="flex flex-col gap-8 w-full max-w-full overflow-x-auto pb-8 mx-auto px-4 md:px-8 custom-scrollbar"
+      style={{ scrollBehavior: 'auto' }} // auto behavior inside the loop for smooth immediate updates
+    >
       <GridSection 
         title="Previous Response" 
         startBar={1} 

@@ -3,24 +3,24 @@ import type { Note, HistoryEntry } from '../types/music';
 
 // A simple C Dorian phrase for the starter
 const defaultStarterPhrase: Note[] = [
-  { pitch: 'C4', step: 0, duration: 1 },
-  { pitch: 'Eb4', step: 2, duration: 1 },
-  { pitch: 'G4', step: 4, duration: 1 },
-  { pitch: 'F4', step: 6, duration: 1 },
-  { pitch: 'C4', step: 8, duration: 1 },
-  { pitch: 'C4', step: 10, duration: 1 },
-  { pitch: 'Eb4', step: 12, duration: 1 },
-  { pitch: 'D4', step: 14, duration: 1 },
-  { pitch: 'G3', step: 16, duration: 1 },
-  { pitch: 'Bb3', step: 18, duration: 1 },
-  { pitch: 'C4', step: 20, duration: 1 },
-  { pitch: 'C4', step: 24, duration: 1 },
-  { pitch: 'G4', step: 32, duration: 1 },
-  { pitch: 'F4', step: 34, duration: 1 },
-  { pitch: 'Eb4', step: 36, duration: 1 },
-  { pitch: 'D4', step: 38, duration: 1 },
-  { pitch: 'C4', step: 40, duration: 1 },
-  { pitch: 'C4', step: 48, duration: 1 },
+  { pitch: 'C4', step: 0, durationSteps: 1 },
+  { pitch: 'Eb4', step: 2, durationSteps: 1 },
+  { pitch: 'G4', step: 4, durationSteps: 1 },
+  { pitch: 'F4', step: 6, durationSteps: 1 },
+  { pitch: 'C4', step: 8, durationSteps: 1 },
+  { pitch: 'C4', step: 10, durationSteps: 1 },
+  { pitch: 'Eb4', step: 12, durationSteps: 1 },
+  { pitch: 'D4', step: 14, durationSteps: 1 },
+  { pitch: 'G3', step: 16, durationSteps: 1 },
+  { pitch: 'Bb3', step: 18, durationSteps: 1 },
+  { pitch: 'C4', step: 20, durationSteps: 1 },
+  { pitch: 'C4', step: 24, durationSteps: 1 },
+  { pitch: 'G4', step: 32, durationSteps: 1 },
+  { pitch: 'F4', step: 34, durationSteps: 1 },
+  { pitch: 'Eb4', step: 36, durationSteps: 1 },
+  { pitch: 'D4', step: 38, durationSteps: 1 },
+  { pitch: 'C4', step: 40, durationSteps: 1 },
+  { pitch: 'C4', step: 48, durationSteps: 1 },
 ];
 
 interface ScoreState {
@@ -34,6 +34,7 @@ interface ScoreState {
   playbackMode: 'previous' | 'response' | 'full';
   metronomeEnabled: boolean;
   auditionEnabled: boolean;
+  autoScrollEnabled: boolean;
   
   // Actions
   toggleNote: (step: number, pitch: string) => boolean;
@@ -47,7 +48,28 @@ interface ScoreState {
   setPlaybackMode: (mode: 'previous' | 'response' | 'full') => void;
   setMetronomeEnabled: (enabled: boolean) => void;
   setAuditionEnabled: (enabled: boolean) => void;
+  setAutoScrollEnabled: (enabled: boolean) => void;
 }
+
+const normalizeNote = (n: any, isResponse: boolean): Note => {
+  let step = Math.floor(Number(n.step) || 0);
+  const minStep = isResponse ? 64 : 0;
+  const maxStep = isResponse ? 127 : 63;
+  if (step < minStep) step = minStep;
+  if (step > maxStep) step = maxStep;
+
+  let dur = Math.floor(Number(n.durationSteps ?? n.duration) || 1);
+  if (dur < 1) dur = 1;
+  if (step + dur > maxStep + 1) {
+    dur = (maxStep + 1) - step;
+  }
+
+  return {
+    pitch: String(n.pitch || "C4"),
+    step,
+    durationSteps: dur
+  };
+};
 
 export const useScoreStore = create<ScoreState>((set, get) => ({
   previousResponse: defaultStarterPhrase,
@@ -59,6 +81,7 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   playbackMode: 'full',
   metronomeEnabled: false,
   auditionEnabled: true,
+  autoScrollEnabled: true,
   
   toggleNote: (step: number, pitch: string) => {
     let wasAdded = false;
@@ -71,8 +94,8 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       } else {
         wasAdded = true;
         const maxDuration = 128 - step;
-        const duration = Math.min(state.noteLength, maxDuration);
-        return { currentResponse: [...state.currentResponse, { pitch, step, duration }] };
+        const durationSteps = Math.min(state.noteLength, maxDuration);
+        return { currentResponse: [...state.currentResponse, { pitch, step, durationSteps }] };
       }
     });
     
@@ -84,7 +107,6 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   submitResponse: () => {
     const { currentResponse, conversationHistory } = get();
     
-    // Shift currentResponse down by 64 steps
     const newPreviousResponse = currentResponse.map(n => ({
       ...n,
       step: n.step - 64
@@ -127,10 +149,19 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       let newHistory: HistoryEntry[] = [];
 
       if (latestData) {
-        newPreviousResponse = JSON.parse(latestData);
+        const parsed = JSON.parse(latestData);
+        if (Array.isArray(parsed)) {
+          newPreviousResponse = parsed.map(n => normalizeNote(n, false));
+        }
       }
       if (historyData) {
-        newHistory = JSON.parse(historyData);
+        const parsed = JSON.parse(historyData);
+        if (Array.isArray(parsed)) {
+          newHistory = parsed.map(h => ({
+            ...h,
+            notes: Array.isArray(h.notes) ? h.notes.map((n: any) => normalizeNote(n, false)) : []
+          }));
+        }
       }
 
       set({ 
@@ -148,4 +179,5 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   setPlaybackMode: (mode) => set({ playbackMode: mode }),
   setMetronomeEnabled: (enabled) => set({ metronomeEnabled: enabled }),
   setAuditionEnabled: (enabled) => set({ auditionEnabled: enabled }),
+  setAutoScrollEnabled: (enabled) => set({ autoScrollEnabled: enabled }),
 }));

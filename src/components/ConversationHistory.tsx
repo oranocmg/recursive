@@ -44,7 +44,7 @@ export const ConversationHistory: React.FC = () => {
                                 top: 0, 
                                 bottom: 0, 
                                 // Multiply by step width percentage to span correctly in flex
-                                width: `calc(${note.duration} * 100% + ${note.duration - 1}px)` 
+                                width: `calc(${note.durationSteps} * 100% + ${note.durationSteps - 1}px)` 
                               }} 
                             />
                           )}

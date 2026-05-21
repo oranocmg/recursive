@@ -1,7 +1,7 @@
 export interface Note {
   pitch: string; // e.g., "C4"
   step: number;  // 0 to 127 for the full 16-bar loop
-  duration: number; // e.g., 1 (8th note)
+  durationSteps: number; // e.g., 1 (8th note)
 }
 
 export interface HistoryEntry {
