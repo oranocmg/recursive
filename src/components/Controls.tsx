@@ -1,6 +1,6 @@
 import React from 'react';
 import { useScoreStore } from '../store/useScoreStore';
-import { playScore, stopAudio } from '../utils/audio';
+import { playScore, stopAudio, updateMetronomeVolume } from '../utils/audio';
 
 export const Controls: React.FC = () => {
   const { 
@@ -79,7 +79,11 @@ export const Controls: React.FC = () => {
         </div>
 
         <button
-          onClick={() => setMetronomeEnabled(!metronomeEnabled)}
+          onClick={() => {
+            const next = !metronomeEnabled;
+            setMetronomeEnabled(next);
+            updateMetronomeVolume(next);
+          }}
           className={`px-3 py-1.5 text-sm transition-colors rounded ${metronomeEnabled ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
         >
           Metronome {metronomeEnabled ? 'On' : 'Off'}

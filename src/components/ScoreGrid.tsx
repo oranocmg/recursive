@@ -54,7 +54,8 @@ const Playhead = ({ startStep }: { startStep: number }) => {
 };
 
 const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, isReadOnly }) => {
-  const { previousResponse, currentResponse, toggleNote, playheadStep, isPlaying, auditionEnabled } = useScoreStore();
+  const { previousResponse, overridePreviousResponse, currentResponse, toggleNote, playheadStep, isPlaying, auditionEnabled } = useScoreStore();
+  const effectivePreviousResponse = overridePreviousResponse ?? previousResponse;
 
   const handleCellClick = (e: React.MouseEvent, baseStep: number, pitch: string, exactStep?: number) => {
     if (!isReadOnly) {
@@ -181,7 +182,7 @@ const GridSection: React.FC<GridSectionProps> = ({ title, startBar, startStep, i
           {/* Notes */}
           {DIATONIC_PITCHES.map((pitch, pitchIndex) => {
             const notes = isReadOnly 
-              ? previousResponse.filter(n => n.pitch === pitch) 
+              ? effectivePreviousResponse.filter(n => n.pitch === pitch) 
               : currentResponse.filter(n => n.pitch === pitch);
 
             return notes.map(n => {

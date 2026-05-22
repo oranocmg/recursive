@@ -32,6 +32,8 @@ interface ScoreState {
   conversationHistory: HistoryEntry[];
   isPlaying: boolean;
   playheadStep: number;
+  playingHistoryIndex: number | null;
+  overridePreviousResponse: Note[] | null;
   // Settings
   noteLength: number;
   playbackMode: 'previous' | 'response' | 'full';
@@ -47,6 +49,8 @@ interface ScoreState {
   loadState: () => Promise<void>;
   setIsPlaying: (playing: boolean) => void;
   setPlayheadStep: (step: number) => void;
+  setPlayingHistoryIndex: (index: number | null) => void;
+  setOverridePreviousResponse: (notes: Note[] | null) => void;
   setNoteLength: (length: number) => void;
   setPlaybackMode: (mode: 'previous' | 'response' | 'full') => void;
   setMetronomeEnabled: (enabled: boolean) => void;
@@ -82,6 +86,8 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   conversationHistory: [],
   isPlaying: false,
   playheadStep: 0,
+  playingHistoryIndex: null,
+  overridePreviousResponse: null,
   noteLength: 1,
   playbackMode: 'full',
   metronomeEnabled: false,
@@ -258,6 +264,8 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
 
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setPlayheadStep: (step) => set({ playheadStep: step }),
+  setPlayingHistoryIndex: (index) => set({ playingHistoryIndex: index }),
+  setOverridePreviousResponse: (notes) => set({ overridePreviousResponse: notes }),
   setNoteLength: (length) => set({ noteLength: length }),
   setPlaybackMode: (mode) => set({ playbackMode: mode }),
   setMetronomeEnabled: (enabled) => set({ metronomeEnabled: enabled }),

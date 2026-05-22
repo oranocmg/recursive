@@ -19,7 +19,15 @@ const createSynths = () => {
     oscillator: { type: 'square' },
     envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 }
   }).toDestination();
-  metronomeSynth.volume.value = -12;
+  
+  const metronomeEnabled = useScoreStore.getState().metronomeEnabled;
+  metronomeSynth.volume.value = metronomeEnabled ? -12 : -Infinity;
+};
+
+export const updateMetronomeVolume = (enabled: boolean) => {
+  if (metronomeSynth) {
+    metronomeSynth.volume.rampTo(enabled ? -12 : -Infinity, 0.1);
+  }
 };
 
 let isAudioInitialized = false;
@@ -30,11 +38,16 @@ let animationFrameId: number | null = null;
 let isCurrentlyPlaying = false;
 let currentEndStep = 0;
 let startOffsetStep = 0;
+let isPlayAll = false;
+let playAllHistoryData: { id: string; notes: Note[]; timestamp: number }[] = [];
+let playAllStartTime = 0;
+let nextChunkToSchedule = 0;
 
 export const getExactPlayheadStep = () => {
   if (!isCurrentlyPlaying) return 0;
   const elapsed = (performance.now() - playbackStartTime) / 1000;
-  return startOffsetStep + (elapsed / STEP_DURATION);
+  const exact = startOffsetStep + (elapsed / STEP_DURATION);
+  return isPlayAll ? (exact % 64) : exact;
 };
 
 export const initAudio = async () => {
@@ -49,14 +62,29 @@ const playheadLoop = () => {
   if (!isCurrentlyPlaying) return;
 
   const elapsed = (performance.now() - playbackStartTime) / 1000;
-  const currentStep = startOffsetStep + Math.floor(elapsed / STEP_DURATION);
+  const rawStep = startOffsetStep + Math.floor(elapsed / STEP_DURATION);
 
-  if (currentStep >= currentEndStep) {
+  if (rawStep >= currentEndStep) {
     stopAudio();
     return;
   }
 
-  useScoreStore.getState().setPlayheadStep(currentStep);
+  const state = useScoreStore.getState();
+  state.setPlayheadStep(isPlayAll ? (rawStep % 64) : rawStep);
+  
+  if (isPlayAll) {
+    const activeIndex = Math.floor(rawStep / 64);
+    if (state.playingHistoryIndex !== activeIndex && activeIndex >= 0 && activeIndex < state.conversationHistory.length) {
+      state.setPlayingHistoryIndex(activeIndex);
+      state.setOverridePreviousResponse(state.conversationHistory[activeIndex].notes);
+    }
+
+    // Dynamically schedule ahead
+    while (nextChunkToSchedule <= activeIndex + 1 && nextChunkToSchedule < playAllHistoryData.length) {
+      scheduleChunk(nextChunkToSchedule);
+      nextChunkToSchedule++;
+    }
+  }
   
   animationFrameId = requestAnimationFrame(playheadLoop);
 };
@@ -97,17 +125,16 @@ export const playScore = async (previousResponse: Note[], currentResponse: Note[
     synth?.triggerAttackRelease(n.pitch, duration, startTime);
   });
 
-  if (state.metronomeEnabled) {
-    const totalStepsToPlay = endStep - startStep;
-    for (let s = 0; s < totalStepsToPlay; s++) {
-      const isQuarter = s % 2 === 0;
-      const isBarStart = s % 8 === 0;
-      if (isQuarter) {
-        const time = now + s * STEP_DURATION;
-        const pitch = isBarStart ? "C6" : "C5";
-        const vel = isBarStart ? 1 : 0.5;
-        metronomeSynth?.triggerAttackRelease(pitch, 0.05, time, vel);
-      }
+  // Always schedule metronome so it can be unmuted dynamically
+  const totalStepsToPlay = endStep - startStep;
+  for (let s = 0; s < totalStepsToPlay; s++) {
+    const isQuarter = s % 2 === 0;
+    const isBarStart = s % 8 === 0;
+    if (isQuarter) {
+      const time = now + s * STEP_DURATION;
+      const pitch = isBarStart ? "C6" : "C5";
+      const vel = isBarStart ? 1 : 0.5;
+      metronomeSynth?.triggerAttackRelease(pitch, 0.05, time, vel);
     }
   }
 
@@ -129,11 +156,16 @@ export const stopAudio = () => {
   Tone.Transport.cancel();
   
   isCurrentlyPlaying = false;
-  useScoreStore.getState().setPlayheadStep(0);
-  useScoreStore.getState().setIsPlaying(false);
+  isPlayAll = false;
+  playAllHistoryData = [];
+  const state = useScoreStore.getState();
+  state.setPlayheadStep(0);
+  state.setIsPlaying(false);
+  state.setPlayingHistoryIndex(null);
+  state.setOverridePreviousResponse(null);
 };
 
-export const playHistoryItem = async (notes: Note[]) => {
+export const playHistoryItem = async (notes: Note[], index: number) => {
   await initAudio();
   stopAudio();
 
@@ -148,10 +180,83 @@ export const playHistoryItem = async (notes: Note[]) => {
     const duration = durationSteps * STEP_DURATION;
     synth?.triggerAttackRelease(n.pitch, duration, startTime);
   });
+  
+  // Schedule metronome
+  for (let s = 0; s < 64; s++) {
+    const isQuarter = s % 2 === 0;
+    const isBarStart = s % 8 === 0;
+    if (isQuarter) {
+      const time = now + s * STEP_DURATION;
+      const pitch = isBarStart ? "C6" : "C5";
+      const vel = isBarStart ? 1 : 0.5;
+      metronomeSynth?.triggerAttackRelease(pitch, 0.05, time, vel);
+    }
+  }
 
   playbackStartTime = performance.now();
   isCurrentlyPlaying = true;
-  useScoreStore.getState().setIsPlaying(true);
+  
+  const state = useScoreStore.getState();
+  state.setIsPlaying(true);
+  state.setPlayingHistoryIndex(index);
+  state.setOverridePreviousResponse(notes);
+  
+  animationFrameId = requestAnimationFrame(playheadLoop);
+};
+
+export const scheduleChunk = (chunkIndex: number) => {
+  if (chunkIndex >= playAllHistoryData.length) return;
+  
+  const entry = playAllHistoryData[chunkIndex];
+  const sectionStartStep = chunkIndex * 64;
+  
+  entry.notes.forEach(n => {
+    const durationSteps = n.durationSteps && n.durationSteps > 0 ? n.durationSteps : 1;
+    const startTime = playAllStartTime + (sectionStartStep + n.step) * STEP_DURATION;
+    const duration = durationSteps * STEP_DURATION;
+    synth?.triggerAttackRelease(n.pitch, duration, startTime);
+  });
+
+  for (let s = 0; s < 64; s++) {
+    const isQuarter = s % 2 === 0;
+    const isBarStart = s % 8 === 0;
+    if (isQuarter) {
+      const time = playAllStartTime + (sectionStartStep + s) * STEP_DURATION;
+      const pitch = isBarStart ? "C6" : "C5";
+      const vel = isBarStart ? 1 : 0.5;
+      metronomeSynth?.triggerAttackRelease(pitch, 0.05, time, vel);
+    }
+  }
+};
+
+export const playAllHistory = async (history: { id: string; notes: Note[]; timestamp: number }[]) => {
+  await initAudio();
+  stopAudio();
+
+  if (history.length === 0) return;
+
+  startOffsetStep = 0;
+  currentEndStep = history.length * 64; 
+  isPlayAll = true;
+  playAllHistoryData = history;
+  
+  playAllStartTime = Tone.now();
+  nextChunkToSchedule = 0;
+  
+  // Initial schedule (chunk 0 and 1)
+  scheduleChunk(0);
+  if (history.length > 1) {
+    scheduleChunk(1);
+  }
+  nextChunkToSchedule = 2;
+
+  playbackStartTime = performance.now();
+  isCurrentlyPlaying = true;
+  
+  const state = useScoreStore.getState();
+  state.setIsPlaying(true);
+  state.setPlayingHistoryIndex(0);
+  state.setOverridePreviousResponse(history[0].notes);
   
   animationFrameId = requestAnimationFrame(playheadLoop);
 };
